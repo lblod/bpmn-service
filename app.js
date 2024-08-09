@@ -13,9 +13,13 @@ import {
 } from "./sparql-queries.js";
 import { convert as convertBpmn } from "bpmn-to-image";
 import path from "path";
+import { runAsyncJob } from "./job.js";
 
 const STORAGE_FOLDER_PATH = "/share/";
 const HEADER_MU_SESSION_ID = "mu-session-id";
+const JOB_GRAPH = "http://mu.semte.ch/graphs/bpmn-job";
+const JOB_OPERATION =
+  "http://redpencil.data.gift/id/jobs/concept/JobOperation/BpmnToRdf";
 
 app.use(
   bodyParser.json({
@@ -25,7 +29,7 @@ app.use(
   })
 );
 
-app.post("/", async (req, res, next) => {
+app.post("/", async (req, res) => {
   const sessionUri = req.get(HEADER_MU_SESSION_ID);
   if (!sessionUri) {
     return res.status(401).send("Session ID header not found.");
@@ -61,30 +65,14 @@ app.post("/", async (req, res, next) => {
         "Could not find file in path. Check if the physical file is available on the server and if this service has the right mountpoint."
       );
   }
-  const bpmnFile = await readFile(filePath, "utf-8");
-  let bboTriples;
-  try {
-    bboTriples = await translateToRdf(bpmnFile, virtualFileUri);
-  } catch (e) {
-    console.error(e);
-    return next(e);
-  }
-  const chunkArr = (arr, size) =>
-    Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
-      arr.slice(i * size, i * size + size)
-    );
-  const chunks = chunkArr(bboTriples.split('\n'), 100);
 
-  for (const chunk of chunks) {
-    const q = `
-        INSERT DATA {
-            ${chunk.join('\n')}
-        }`
-    await update(q);
-  }
+  runAsyncJob(JOB_GRAPH, JOB_OPERATION, groupUri, virtualFileUri, () =>
+    extractProcessSteps(filePath, virtualFileUri)
+  );
+
   return res
-    .status(200)
-    .send({ message: "bpmn extraction completed successfully" });
+    .status(202)
+    .send({ message: "process steps extraction job running" });
 });
 
 app.get("/:id/download", async (req, res) => {
@@ -130,6 +118,20 @@ app.get("/:id/download", async (req, res) => {
 });
 
 app.use(errorHandler);
+
+async function extractProcessSteps(bpmnFilePath, virtualFileUri) {
+  const bpmnFile = await readFile(bpmnFilePath, "utf-8");
+  const bboTriples = await translateToRdf(bpmnFile, virtualFileUri);
+
+  const chunkSize = 100;
+  for (let i = 0; i < bboTriples.length; i += chunkSize) {
+    const bboTriplesChunk = bboTriples.slice(i, i + chunkSize);
+    const insertBboTriplesQuery =
+      generateBboTriplesInsertQuery(bboTriplesChunk);
+    await update(insertBboTriplesQuery);
+  }
+}
+
 async function translateToRdf(bpmn, virtualFileUri) {
   if (!bpmn || bpmn.trim().length === 0) {
     const error = new Error(
@@ -163,5 +165,5 @@ async function translateToRdf(bpmn, virtualFileUri) {
     throw error;
   }
 
-  return triples;
+  return triples.split("\n");
 }

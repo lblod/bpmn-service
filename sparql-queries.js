@@ -4,7 +4,7 @@ export function generateBboTriplesInsertQuery(bboTriples) {
   // prettier-ignore
   return `
     INSERT DATA {
-      ${bboTriples}
+      ${bboTriples.join("\n")}
     }`;
 }
 
@@ -29,8 +29,7 @@ export function generateGroupUriSelectQuery(sessionUri) {
     SELECT ?groupUri
     WHERE {
       ${sparqlEscapeUri(sessionUri)} muExt:sessionGroup ?groupUri .
-    }
-  `;
+    }`;
 }
 
 export function generateFileGroupLinkInsertQuery(virtualFileUri, groupUri) {
